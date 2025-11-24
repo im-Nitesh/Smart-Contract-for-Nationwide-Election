@@ -104,34 +104,7 @@ cat deployments/bscTestnet-deployment.json
 
 # Check contract on BSCScan
 # Visit: https://testnet.bscscan.com/address/YOUR_CONTRACT_ADDRESS
-```
 
-## Interaction Commands
-
-### Using Interact Script
-
-```bash
-# Check election status
-npx hardhat run scripts/interact.js --network bscTestnet status
-
-# Register voters
-npx hardhat run scripts/interact.js --network bscTestnet register
-
-# Nominate candidates
-npx hardhat run scripts/interact.js --network bscTestnet nominate
-
-# Move to next phase
-npx hardhat run scripts/interact.js --network bscTestnet phase
-
-# Cast vote for candidate 1
-npx hardhat run scripts/interact.js --network bscTestnet vote 1
-
-# View all candidates
-npx hardhat run scripts/interact.js --network bscTestnet candidates
-
-# View election results
-npx hardhat run scripts/interact.js --network bscTestnet results
-```
 
 ### Using Hardhat Console
 
@@ -165,46 +138,6 @@ console.log("Total Voters:", totalVoters.toString());
 
 # Exit console
 .exit
-```
-
-## Complete Election Workflow
-
-### Step-by-Step Execution
-
-```bash
-# 1. Deploy Contract
-npx hardhat run scripts/deploy.js --network bscTestnet
-
-# 2. Check Initial Status
-npx hardhat run scripts/interact.js --network bscTestnet status
-
-# 3. Register Voters (Phase: Registration)
-npx hardhat run scripts/interact.js --network bscTestnet register
-
-# 4. Move to Nomination Phase
-npx hardhat run scripts/interact.js --network bscTestnet phase
-
-# 5. Nominate Candidates (Phase: Nomination)
-npx hardhat run scripts/interact.js --network bscTestnet nominate
-
-# 6. View Nominated Candidates
-npx hardhat run scripts/interact.js --network bscTestnet candidates
-
-# 7. Move to Voting Phase
-npx hardhat run scripts/interact.js --network bscTestnet phase
-
-# 8. Cast Votes (Phase: Voting)
-# Note: This will use the first registered voter
-npx hardhat run scripts/interact.js --network bscTestnet vote 1
-
-# 9. End Voting Phase
-npx hardhat run scripts/interact.js --network bscTestnet phase
-
-# 10. Declare Results
-npx hardhat run scripts/interact.js --network bscTestnet phase
-
-# 11. View Final Results
-npx hardhat run scripts/interact.js --network bscTestnet results
 ```
 
 ## Useful Hardhat Tasks
@@ -368,95 +301,6 @@ npm run compile
 npm run test
 npm run deploy:testnet
 npm run interact -- status
-```
-
-## Quick Reference: Function Calls
-
-### Commissioner Functions
-
-```javascript
-// Register single voter
-await election.registerVoter(voterAddress, "NATIONAL_ID");
-
-// Batch register voters
-await election.batchRegisterVoters([addr1, addr2], ["ID1", "ID2"]);
-
-// Nominate candidate
-await election.nominateCandidate("Name", "Party", "Manifesto");
-
-// Move to next phase
-await election.moveToNextPhase();
-
-// Deactivate candidate
-await election.deactivateCandidate(candidateId);
-
-// Emergency stop
-await election.emergencyStop();
-
-// Transfer commissioner role
-await election.transferCommissioner(newCommissionerAddress);
-```
-
-### Voter Functions
-
-```javascript
-// Cast vote
-await election.castVote(candidateId);
-
-// Check if registered
-const isRegistered = await election.isRegisteredVoter(voterAddress);
-
-// Check if voted
-const hasVoted = await election.hasVoterVoted(voterAddress);
-```
-
-### View Functions (Anyone)
-
-```javascript
-// Get election status
-const status = await election.getElectionStatus();
-
-// Get all candidates
-const candidates = await election.getAllCandidates();
-
-// Get specific candidate
-const candidate = await election.getCandidate(candidateId);
-
-// Get total voters
-const totalVoters = await election.getTotalVoters();
-
-// Get total candidates
-const totalCandidates = await election.getTotalCandidates();
-
-// Get results (after declaration)
-const results = await election.getResults();
-
-// Get candidate vote count (after results published)
-const voteCount = await election.getCandidateVoteCount(candidateId);
-```
-
-## Emergency Recovery
-
-```bash
-# If deployment fails mid-way
-npx hardhat clean
-rm -rf cache artifacts
-npx hardhat compile
-npx hardhat run scripts/deploy.js --network bscTestnet
-
-# If tests fail
-rm -rf cache
-npx hardhat clean
-npx hardhat compile
-npx hardhat test
-
-# If network issues
-# Check your internet connection
-# Try alternate RPC: https://data-seed-prebsc-2-s1.binance.org:8545
-
-# If out of gas
-# Get more testnet BNB from faucet
-# Increase gas limit in hardhat.config.js
 ```
 
 ## Performance Optimization
