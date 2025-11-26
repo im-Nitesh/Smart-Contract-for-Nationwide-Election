@@ -1,1032 +1,1248 @@
-/*
-NationwideElection React Starter (single-file preview)
+import React, { useState, useEffect } from "react";
+import {
+  AlertCircle,
+  Users,
+  Vote,
+  Trophy,
+  Calendar,
+  CheckCircle,
+  XCircle,
+  Shield,
+  Activity,
+  Wallet,
+  ChevronRight,
+  TrendingUp,
+  Lock,
+  Eye,
+} from "lucide-react";
+import * as contractUtils from "./utils/contract";
 
-What this file contains:
-- A complete React component (default export) that:
-  - Detects MetaMask
-  - Connects/disconnects wallet
-  - Shows election status, candidate list, and voter actions
-  - Lets registered voters cast a vote (via MetaMask/ethers.js)
-  - Lets commissioner register a voter / nominate a candidate / move phases
-  - Displays results when available
-
-How to use this starter:
-1. Create a new React project (recommended: Vite + React).
-   npm create vite@latest my-election-app -- --template react
-   cd my-election-app
-2. Install dependencies:
-   npm install ethers react-toastify clsx
-   (Optional: install Tailwind CSS; the UI below assumes Tailwind is available)
-3. Replace the CONTRACT_ADDRESS and CONTRACT_ABI placeholders with your deployed
-   NationwideElection contract address and ABI.
-4. Start dev server: npm run dev
-
-Notes:
-- Ensure MetaMask is configured to the correct Binance Smart Chain network (Testnet or Mainnet)
-- This starter uses Tailwind classes for styling. If you don't want Tailwind, you can
-  use plain CSS or a UI library; the logic will still work.
-- This file is a single-file demo for quickly wiring the contract; split into components
-  in a real app.
-
-*/
-
-import React, { useEffect, useState, useCallback } from "react";
-import { ethers } from "ethers";
-import { toast, ToastContainer } from "react-toastify";
-import "react-toastify/dist/ReactToastify.css";
-
-// -------------------- REPLACE THESE --------------------
-const CONTRACT_ADDRESS = "0x96EE21C1169C8Fa3D82fFB5B84E0eCD30A13588d";
-const CONTRACT_ABI = [
-  {
-    inputs: [
-      { internalType: "string", name: "_electionName", type: "string" },
-      { internalType: "uint256", name: "_durationInDays", type: "uint256" },
-    ],
-    stateMutability: "nonpayable",
-    type: "constructor",
-  },
-  {
-    anonymous: false,
-    inputs: [
-      {
-        indexed: true,
-        internalType: "uint256",
-        name: "candidateId",
-        type: "uint256",
-      },
-      {
-        indexed: false,
-        internalType: "uint256",
-        name: "timestamp",
-        type: "uint256",
-      },
-    ],
-    name: "CandidateDeactivated",
-    type: "event",
-  },
-  {
-    anonymous: false,
-    inputs: [
-      {
-        indexed: true,
-        internalType: "uint256",
-        name: "candidateId",
-        type: "uint256",
-      },
-      { indexed: false, internalType: "string", name: "name", type: "string" },
-      { indexed: false, internalType: "string", name: "party", type: "string" },
-      {
-        indexed: false,
-        internalType: "uint256",
-        name: "timestamp",
-        type: "uint256",
-      },
-    ],
-    name: "CandidateNominated",
-    type: "event",
-  },
-  {
-    anonymous: false,
-    inputs: [
-      { indexed: false, internalType: "string", name: "name", type: "string" },
-      {
-        indexed: false,
-        internalType: "uint256",
-        name: "startTime",
-        type: "uint256",
-      },
-      {
-        indexed: false,
-        internalType: "uint256",
-        name: "endTime",
-        type: "uint256",
-      },
-    ],
-    name: "ElectionCreated",
-    type: "event",
-  },
-  {
-    anonymous: false,
-    inputs: [
-      {
-        indexed: false,
-        internalType: "uint256",
-        name: "timestamp",
-        type: "uint256",
-      },
-    ],
-    name: "EmergencyStop",
-    type: "event",
-  },
-  {
-    anonymous: false,
-    inputs: [
-      {
-        indexed: false,
-        internalType: "enum NationwideElection.ElectionPhase",
-        name: "newPhase",
-        type: "uint8",
-      },
-      {
-        indexed: false,
-        internalType: "uint256",
-        name: "timestamp",
-        type: "uint256",
-      },
-    ],
-    name: "PhaseChanged",
-    type: "event",
-  },
-  {
-    anonymous: false,
-    inputs: [
-      {
-        indexed: true,
-        internalType: "uint256",
-        name: "winningCandidateId",
-        type: "uint256",
-      },
-      {
-        indexed: false,
-        internalType: "uint256",
-        name: "totalVotes",
-        type: "uint256",
-      },
-      {
-        indexed: false,
-        internalType: "uint256",
-        name: "timestamp",
-        type: "uint256",
-      },
-    ],
-    name: "ResultsDeclared",
-    type: "event",
-  },
-  {
-    anonymous: false,
-    inputs: [
-      {
-        indexed: true,
-        internalType: "address",
-        name: "voter",
-        type: "address",
-      },
-      {
-        indexed: true,
-        internalType: "uint256",
-        name: "candidateId",
-        type: "uint256",
-      },
-      {
-        indexed: false,
-        internalType: "uint256",
-        name: "timestamp",
-        type: "uint256",
-      },
-    ],
-    name: "VoteCast",
-    type: "event",
-  },
-  {
-    anonymous: false,
-    inputs: [
-      {
-        indexed: true,
-        internalType: "address",
-        name: "voter",
-        type: "address",
-      },
-      {
-        indexed: false,
-        internalType: "string",
-        name: "nationalId",
-        type: "string",
-      },
-      {
-        indexed: false,
-        internalType: "uint256",
-        name: "timestamp",
-        type: "uint256",
-      },
-    ],
-    name: "VoterRegistered",
-    type: "event",
-  },
-  {
-    anonymous: false,
-    inputs: [
-      {
-        indexed: true,
-        internalType: "address",
-        name: "voter",
-        type: "address",
-      },
-      { indexed: false, internalType: "bool", name: "hasVoted", type: "bool" },
-    ],
-    name: "VoterStatusUpdated",
-    type: "event",
-  },
-  {
-    inputs: [
-      { internalType: "address[]", name: "_voterAddresses", type: "address[]" },
-      { internalType: "string[]", name: "_nationalIds", type: "string[]" },
-    ],
-    name: "batchRegisterVoters",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [
-      { internalType: "uint256", name: "_candidateId", type: "uint256" },
-    ],
-    name: "castVote",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "currentPhase",
-    outputs: [
-      {
-        internalType: "enum NationwideElection.ElectionPhase",
-        name: "",
-        type: "uint8",
-      },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [
-      { internalType: "uint256", name: "_candidateId", type: "uint256" },
-    ],
-    name: "deactivateCandidate",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "electionCommissioner",
-    outputs: [{ internalType: "address", name: "", type: "address" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "electionEndTime",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "electionName",
-    outputs: [{ internalType: "string", name: "", type: "string" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "electionStartTime",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "emergencyStop",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "getAllCandidates",
-    outputs: [
-      {
-        components: [
-          { internalType: "uint256", name: "id", type: "uint256" },
-          { internalType: "string", name: "name", type: "string" },
-          { internalType: "string", name: "party", type: "string" },
-          { internalType: "string", name: "manifesto", type: "string" },
-          { internalType: "uint256", name: "voteCount", type: "uint256" },
-          { internalType: "bool", name: "isActive", type: "bool" },
-          { internalType: "uint256", name: "nominationTime", type: "uint256" },
-        ],
-        internalType: "struct ICandidateManagement.Candidate[]",
-        name: "",
-        type: "tuple[]",
-      },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [
-      { internalType: "uint256", name: "_candidateId", type: "uint256" },
-    ],
-    name: "getCandidate",
-    outputs: [
-      {
-        components: [
-          { internalType: "uint256", name: "id", type: "uint256" },
-          { internalType: "string", name: "name", type: "string" },
-          { internalType: "string", name: "party", type: "string" },
-          { internalType: "string", name: "manifesto", type: "string" },
-          { internalType: "uint256", name: "voteCount", type: "uint256" },
-          { internalType: "bool", name: "isActive", type: "bool" },
-          { internalType: "uint256", name: "nominationTime", type: "uint256" },
-        ],
-        internalType: "struct ICandidateManagement.Candidate",
-        name: "",
-        type: "tuple",
-      },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [
-      { internalType: "uint256", name: "_candidateId", type: "uint256" },
-    ],
-    name: "getCandidateVoteCount",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "getElectionStatus",
-    outputs: [
-      { internalType: "string", name: "name", type: "string" },
-      {
-        internalType: "enum NationwideElection.ElectionPhase",
-        name: "phase",
-        type: "uint8",
-      },
-      { internalType: "uint256", name: "startTime", type: "uint256" },
-      { internalType: "uint256", name: "endTime", type: "uint256" },
-      { internalType: "uint256", name: "totalVoters", type: "uint256" },
-      { internalType: "uint256", name: "totalCandidates", type: "uint256" },
-      { internalType: "uint256", name: "votesCast", type: "uint256" },
-      { internalType: "bool", name: "resultsAvailable", type: "bool" },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "getResults",
-    outputs: [
-      { internalType: "uint256", name: "winner", type: "uint256" },
-      { internalType: "string", name: "winnerName", type: "string" },
-      { internalType: "string", name: "winnerParty", type: "string" },
-      { internalType: "uint256", name: "winnerVotes", type: "uint256" },
-      { internalType: "uint256", name: "totalVotes", type: "uint256" },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "getTotalCandidates",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "getTotalVoters",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [
-      { internalType: "address", name: "_voterAddress", type: "address" },
-    ],
-    name: "getVoter",
-    outputs: [
-      {
-        components: [
-          { internalType: "bool", name: "isRegistered", type: "bool" },
-          { internalType: "bool", name: "hasVoted", type: "bool" },
-          {
-            internalType: "uint256",
-            name: "votedCandidateId",
-            type: "uint256",
-          },
-          {
-            internalType: "uint256",
-            name: "registrationTime",
-            type: "uint256",
-          },
-          { internalType: "string", name: "nationalId", type: "string" },
-        ],
-        internalType: "struct IVoterManagement.Voter",
-        name: "",
-        type: "tuple",
-      },
-    ],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [
-      { internalType: "address", name: "_voterAddress", type: "address" },
-    ],
-    name: "hasVoterVoted",
-    outputs: [{ internalType: "bool", name: "", type: "bool" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [
-      { internalType: "address", name: "_voterAddress", type: "address" },
-    ],
-    name: "isRegisteredVoter",
-    outputs: [{ internalType: "bool", name: "", type: "bool" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "moveToNextPhase",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [
-      { internalType: "string", name: "_name", type: "string" },
-      { internalType: "string", name: "_party", type: "string" },
-      { internalType: "string", name: "_manifesto", type: "string" },
-    ],
-    name: "nominateCandidate",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [
-      { internalType: "address", name: "_voterAddress", type: "address" },
-      { internalType: "string", name: "_nationalId", type: "string" },
-    ],
-    name: "registerVoter",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "resultsPublished",
-    outputs: [{ internalType: "bool", name: "", type: "bool" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "totalVotesCast",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  {
-    inputs: [
-      { internalType: "address", name: "_newCommissioner", type: "address" },
-    ],
-    name: "transferCommissioner",
-    outputs: [],
-    stateMutability: "nonpayable",
-    type: "function",
-  },
-  {
-    inputs: [],
-    name: "winningCandidateId",
-    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
-    stateMutability: "view",
-    type: "function",
-  },
-  
-];
-// ------------------------------------------------------
-
-// Helpful mapping for phases (must match Solidity enum order)
-const PHASES = [
-  "Registration",
-  "Nomination",
-  "Voting",
-  "Ended",
-  "ResultsDeclared",
-];
-
-export default function App() {
-  const [provider, setProvider] = useState(null);
-  const [signer, setSigner] = useState(null);
-  const [account, setAccount] = useState(null);
-  const [contract, setContract] = useState(null);
-
-  const [status, setStatus] = useState(null);
+const ElectionDApp = () => {
+  const [account, setAccount] = useState("");
+  const [isConnected, setIsConnected] = useState(false);
+  const [isCorrectNetwork, setIsCorrectNetwork] = useState(false);
+  const [isCommissioner, setIsCommissioner] = useState(false);
+  const [electionStatus, setElectionStatus] = useState(null);
   const [candidates, setCandidates] = useState([]);
-  const [isRegistered, setIsRegistered] = useState(false);
-  const [hasVoted, setHasVoted] = useState(false);
+  const [voterInfo, setVoterInfo] = useState({
+    isRegistered: false,
+    hasVoted: false,
+  });
+  const [activeTab, setActiveTab] = useState("home");
   const [loading, setLoading] = useState(false);
-  const [txInProgress, setTxInProgress] = useState(false);
+  const [message, setMessage] = useState({ type: "", text: "" });
+  const [showVoteConfirm, setShowVoteConfirm] = useState(false);
+  const [selectedVoteCandidate, setSelectedVoteCandidate] = useState(null);
 
-  // UI form state
-  const [registerAddress, setRegisterAddress] = useState("");
-  const [registerNationalId, setRegisterNationalId] = useState("");
-  const [nomName, setNomName] = useState("");
-  const [nomParty, setNomParty] = useState("");
-  const [nomManifesto, setNomManifesto] = useState("");
+  const [voterAddress, setVoterAddress] = useState("");
+  const [nationalId, setNationalId] = useState("");
+  const [batchVoters, setBatchVoters] = useState([{ address: "", id: "" }]);
+  const [candidateName, setCandidateName] = useState("");
+  const [candidateParty, setCandidateParty] = useState("");
+  const [candidateManifesto, setCandidateManifesto] = useState("");
 
-  // ---------- Wallet / Provider setup ----------
-  const detectProvider = useCallback(async () => {
-    if (window.ethereum) {
-      const p = new ethers.providers.Web3Provider(window.ethereum, "any");
-      setProvider(p);
-      return p;
-    } else {
-      setProvider(null);
-      return null;
-    }
+  const phaseNames = [
+    "Registration",
+    "Nomination",
+    "Voting",
+    "Ended",
+    "Results Declared",
+  ];
+
+  useEffect(() => {
+    checkIfWalletIsConnected();
+    setupEventListeners();
   }, []);
+
+  useEffect(() => {
+    if (isConnected && isCorrectNetwork) {
+      loadContractData();
+    }
+  }, [isConnected, isCorrectNetwork, account]);
+
+  const checkIfWalletIsConnected = async () => {
+    try {
+      if (typeof window.ethereum !== "undefined") {
+        const accounts = await window.ethereum.request({
+          method: "eth_accounts",
+        });
+
+        if (accounts.length > 0) {
+          const account = accounts[0];
+          setAccount(account);
+          setIsConnected(true);
+
+          const networkOk = await contractUtils.checkNetwork();
+          setIsCorrectNetwork(networkOk);
+
+          if (networkOk) {
+            await loadContractData();
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error checking wallet connection:", error);
+    }
+  };
+
+  const setupEventListeners = () => {
+    if (window.ethereum) {
+      window.ethereum.on("accountsChanged", handleAccountsChanged);
+      window.ethereum.on("chainChanged", handleChainChanged);
+    }
+  };
+
+  const handleAccountsChanged = async (accounts) => {
+    if (accounts.length === 0) {
+      setIsConnected(false);
+      setAccount("");
+      setIsCommissioner(false);
+    } else if (accounts[0] !== account) {
+      setAccount(accounts[0]);
+      await loadContractData();
+    }
+  };
+
+  const handleChainChanged = () => {
+    window.location.reload();
+  };
 
   const connectWallet = async () => {
     try {
-      const p = await detectProvider();
-      if (!p) {
-        toast.error("MetaMask not detected. Install MetaMask and try again.");
+      setLoading(true);
+
+      if (typeof window.ethereum === "undefined") {
+        setMessage({
+          type: "error",
+          text: "MetaMask is not installed. Please install MetaMask browser extension.",
+        });
+        window.open("https://metamask.io/download/", "_blank");
         return;
       }
-      await p.send("eth_requestAccounts", []);
-      const s = p.getSigner();
-      const a = await s.getAddress();
-      setSigner(s);
-      setAccount(a);
-      const c = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, s);
-      setContract(c);
-      toast.success("Wallet connected: " + shorten(a));
-    } catch (err) {
-      console.error(err);
-      toast.error("Failed to connect wallet: " + (err && err.message));
-    }
-  };
 
-  const disconnect = () => {
-    setSigner(null);
-    setAccount(null);
-    setContract(null);
-    setIsRegistered(false);
-    setHasVoted(false);
-    toast.info("Disconnected");
-  };
+      const walletAddress = await contractUtils.connectWallet();
+      setAccount(walletAddress);
+      setIsConnected(true);
 
-  // handle account changes
-  useEffect(() => {
-    if (!window.ethereum) return;
-    const handler = (accounts) => {
-      if (accounts.length === 0) {
-        disconnect();
-      } else {
-        setAccount(accounts[0]);
+      const networkOk = await contractUtils.checkNetwork();
+
+      if (!networkOk) {
+        setMessage({ type: "error", text: "Please switch to BSC network" });
+        await contractUtils.switchToBSCNetwork(true);
+        return;
       }
-    };
-    window.ethereum.on("accountsChanged", handler);
-    return () =>
-      window.ethereum &&
-      window.ethereum.removeListener("accountsChanged", handler);
-  }, []);
 
-  // ---------- Load basic on-chain state ----------
-  const loadStatusAndCandidates = useCallback(async (cInstance) => {
-    if (!cInstance) return;
-    try {
-      setLoading(true);
-      const s = await cInstance.getElectionStatus();
-      // getElectionStatus returns tuple: (name, phase, start, end, totalVoters, totalCandidates, votesCast, resultsAvailable)
-      const election = {
-        name: s[0],
-        phase: PHASES[Number(s[1])],
-        phaseIndex: Number(s[1]),
-        startTime: Number(s[2]) * 1000,
-        endTime: Number(s[3]) * 1000,
-        totalVoters: Number(s[4]),
-        totalCandidates: Number(s[0]),
-        votesCast: Number(s[0]),
-        resultsAvailable: Boolean(s[0]),
-      };
-      setStatus(election);
+      setIsCorrectNetwork(true);
+      await loadContractData();
 
-      // load candidates array
-      const rawCandidates = await cInstance.getAllCandidates();
-      const parsed = rawCandidates.map((c) => ({
-        id: Number(c.id),
-        name: c.name,
-        party: c.party,
-        manifesto: c.manifesto,
-        votes: Number(c.voteCount),
-        isActive: c.isActive,
-      }));
-      setCandidates(parsed);
-    } catch (err) {
-      console.error("loadStatusAndCandidates", err);
-      // toast.error("Failed to load election data: " + (err && err.message));
+      setMessage({ type: "success", text: "Wallet connected successfully!" });
+      setActiveTab("dashboard");
+    } catch (error) {
+      console.error("Connection error:", error);
+      setMessage({
+        type: "error",
+        text: error.message || "Failed to connect wallet",
+      });
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
-  // When account or contract set, check registration/vote status
-  useEffect(() => {
-    if (!contract || !account) return;
-    let mounted = true;
-    (async () => {
-      try {
-        const reg = await contract.isRegisteredVoter(account);
-        const voted = await contract.hasVoterVoted(account);
-        if (mounted) {
-          setIsRegistered(reg);
-          setHasVoted(voted);
-        }
-      } catch (err) {
-        console.warn("couldn't fetch voter status", err);
-      }
-    })();
-    return () => (mounted = false);
-  }, [contract, account]);
-
-  // initial detect provider and load read-only data
-  useEffect(() => {
-    (async () => {
-      const p = await detectProvider();
-      if (p) {
-        try {
-          const readProvider = new ethers.providers.Web3Provider(
-            window.ethereum
-          );
-          const readContract = new ethers.Contract(
-            CONTRACT_ADDRESS,
-            CONTRACT_ABI,
-            readProvider
-          );
-          await loadStatusAndCandidates(readContract);
-          // subscribe to events
-          readContract.on("VoteCast", (voter, candidateId, timestamp) => {
-            toast.info(
-              `Vote cast by ${shorten(voter)} for candidate ${candidateId}`
-            );
-            // reload simple data
-            loadStatusAndCandidates(readContract);
-          });
-          readContract.on("PhaseChanged", (newPhase, ts) => {
-            toast.info(`Phase changed to ${PHASES[Number(newPhase)]}`);
-            loadStatusAndCandidates(readContract);
-          });
-        } catch (err) {
-          console.error(err);
-        }
-      }
-    })();
-  }, [detectProvider, loadStatusAndCandidates]);
-
-  // ---------- Transaction helpers ----------
-  const sendTx = async (txPromise) => {
+  const loadContractData = async () => {
     try {
-      setTxInProgress(true);
-      const tx = await txPromise;
-      toast.info("Transaction sent: " + shorten(tx.hash));
-      await tx.wait();
-      toast.success("Transaction confirmed: " + shorten(tx.hash));
-      // reload read-only data
-      const readProvider = new ethers.providers.Web3Provider(window.ethereum);
-      const readContract = new ethers.Contract(
-        CONTRACT_ADDRESS,
-        CONTRACT_ABI,
-        readProvider
+      const [status, candidatesList, commissioner, isRegistered, hasVoted] =
+        await Promise.all([
+          contractUtils.getElectionStatus(),
+          contractUtils.getAllCandidates(),
+          contractUtils.getElectionCommissioner(),
+          contractUtils.isRegisteredVoter(account),
+          contractUtils.hasVoterVoted(account),
+        ]);
+
+      setElectionStatus(status);
+      setCandidates(candidatesList);
+      setIsCommissioner(commissioner.toLowerCase() === account.toLowerCase());
+      setVoterInfo({ isRegistered, hasVoted });
+    } catch (error) {
+      console.error("Error loading contract data:", error);
+      setMessage({ type: "error", text: "Failed to load election data" });
+    }
+  };
+
+  const registerVoter = async () => {
+    if (!voterAddress || !nationalId) {
+      setMessage({ type: "error", text: "Please fill all fields" });
+      return;
+    }
+
+    if (!contractUtils.ethers.utils.isAddress(voterAddress)) {
+      setMessage({ type: "error", text: "Invalid wallet address" });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await contractUtils.registerVoter(voterAddress, nationalId);
+      setMessage({ type: "success", text: "Voter registered successfully!" });
+      setVoterAddress("");
+      setNationalId("");
+      await loadContractData();
+    } catch (error) {
+      console.error("Registration error:", error);
+      setMessage({
+        type: "error",
+        text: error.reason || error.message || "Failed to register voter",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const batchRegisterVoters = async () => {
+    const validVoters = batchVoters.filter((v) => v.address && v.id);
+
+    if (validVoters.length === 0) {
+      setMessage({
+        type: "error",
+        text: "Please add at least one valid voter",
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const addresses = validVoters.map((v) => v.address);
+      const ids = validVoters.map((v) => v.id);
+
+      await contractUtils.batchRegisterVoters(addresses, ids);
+      setMessage({
+        type: "success",
+        text: `${validVoters.length} voters registered successfully!`,
+      });
+      setBatchVoters([{ address: "", id: "" }]);
+      await loadContractData();
+    } catch (error) {
+      console.error("Batch registration error:", error);
+      setMessage({
+        type: "error",
+        text:
+          error.reason || error.message || "Failed to batch register voters",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const nominateCandidate = async () => {
+    if (!candidateName || !candidateParty) {
+      setMessage({ type: "error", text: "Please fill required fields" });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await contractUtils.nominateCandidate(
+        candidateName,
+        candidateParty,
+        candidateManifesto
       );
-      await loadStatusAndCandidates(readContract);
-      setTxInProgress(false);
-      return tx;
-    } catch (err) {
-      console.error(err);
-      toast.error("Transaction failed: " + (err && err.message));
-      setTxInProgress(false);
-      throw err;
+      setMessage({
+        type: "success",
+        text: "Candidate nominated successfully!",
+      });
+      setCandidateName("");
+      setCandidateParty("");
+      setCandidateManifesto("");
+      await loadContractData();
+    } catch (error) {
+      console.error("Nomination error:", error);
+      setMessage({
+        type: "error",
+        text: error.reason || error.message || "Failed to nominate candidate",
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
-  // Cast vote
-  const handleVote = async (candidateId) => {
-    if (!contract || !signer) return toast.error("Connect your wallet first");
-    if (!isRegistered) return toast.error("You are not a registered voter");
-    if (hasVoted) return toast.error("You already voted");
+  const initiateVote = (candidateId) => {
+    setSelectedVoteCandidate(candidateId);
+    setShowVoteConfirm(true);
+  };
+
+  const confirmVote = async () => {
+    setShowVoteConfirm(false);
+    setLoading(true);
+
     try {
-      const contractWithSigner = contract.connect(signer);
-      await sendTx(contractWithSigner.castVote(candidateId));
-      setHasVoted(true);
-    } catch (err) {
-      console.error(err);
+      await contractUtils.castVote(selectedVoteCandidate);
+      setMessage({ type: "success", text: "Vote cast successfully!" });
+      await loadContractData();
+    } catch (error) {
+      console.error("Voting error:", error);
+      setMessage({
+        type: "error",
+        text: error.reason || error.message || "Failed to cast vote",
+      });
+    } finally {
+      setLoading(false);
+      setSelectedVoteCandidate(null);
     }
   };
 
-  // Commissioner actions
-  const handleRegisterVoter = async () => {
-    if (!contract || !signer)
-      return toast.error("Connect wallet as commissioner");
+  const moveToNextPhase = async () => {
+    setLoading(true);
     try {
-      const c = contract.connect(signer);
-      await sendTx(c.registerVoter(registerAddress, registerNationalId));
-      setRegisterAddress("");
-      setRegisterNationalId("");
-    } catch (err) {
-      console.error(err);
+      await contractUtils.moveToNextPhase();
+      setMessage({
+        type: "success",
+        text: "Election phase updated successfully!",
+      });
+      await loadContractData();
+    } catch (error) {
+      console.error("Phase change error:", error);
+      setMessage({
+        type: "error",
+        text: error.reason || error.message || "Failed to update phase",
+      });
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleNominate = async () => {
-    if (!contract || !signer)
-      return toast.error("Connect wallet as commissioner");
-    try {
-      const c = contract.connect(signer);
-      await sendTx(c.nominateCandidate(nomName, nomParty, nomManifesto));
-      setNomName("");
-      setNomParty("");
-      setNomManifesto("");
-    } catch (err) {
-      console.error(err);
-    }
+  const addBatchVoterRow = () => {
+    setBatchVoters([...batchVoters, { address: "", id: "" }]);
   };
 
-  const handleMovePhase = async () => {
-    if (!contract || !signer)
-      return toast.error("Connect wallet as commissioner");
-    try {
-      const c = contract.connect(signer);
-      await sendTx(c.moveToNextPhase());
-    } catch (err) {
-      console.error(err);
-    }
+  const removeBatchVoterRow = (index) => {
+    setBatchVoters(batchVoters.filter((_, i) => i !== index));
   };
 
-  // Get results
-  const fetchResults = async () => {
-    if (!contract) return;
-    try {
-      const r = await contract.getResults();
-      toast.info(`Winner: ${r[1]} (${r[2]}) with ${Number(r[3])} votes`);
-    } catch (err) {
-      toast.error("Couldn't fetch results: " + (err && err.message));
-    }
+  const updateBatchVoter = (index, field, value) => {
+    const updated = [...batchVoters];
+    updated[index][field] = value;
+    setBatchVoters(updated);
   };
 
-  // ---------- Helpers ----------
-  function shorten(addr) {
-    if (!addr) return "";
-    return addr.slice(0, 6) + "..." + addr.slice(-4);
-  }
+  const formatDate = (timestamp) => {
+    return new Date(timestamp * 1000).toLocaleDateString("en-US", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
 
-  // ---------- Render ----------
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-900 text-white p-6">
-      <ToastContainer position="top-right" />
-      <header className="max-w-5xl mx-auto flex items-center justify-between py-6">
-        <div>
-          <h1 className="text-3xl font-extrabold">
-            Nationwide Election Dashboard
-          </h1>
-          <p className="text-sm text-slate-300">
-            Manage voters, candidates and voting on BSC
-          </p>
+  const getPhaseColor = (phase) => {
+    const colors = [
+      "bg-blue-500",
+      "bg-purple-500",
+      "bg-green-500",
+      "bg-orange-500",
+      "bg-red-500",
+    ];
+    return colors[phase] || "bg-gray-500";
+  };
+
+  useEffect(() => {
+    if (message.text) {
+      const timer = setTimeout(() => {
+        setMessage({ type: "", text: "" });
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [message]);
+
+  if (!isConnected) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 text-white">
+        <div className="absolute inset-0 overflow-hidden opacity-20">
+          <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full blur-3xl animate-pulse"></div>
+          <div className="absolute top-60 -left-40 w-96 h-96 bg-blue-500 rounded-full blur-3xl animate-pulse"></div>
+          <div className="absolute -bottom-40 right-60 w-80 h-80 bg-indigo-500 rounded-full blur-3xl animate-pulse"></div>
         </div>
-        <div className="flex items-center gap-4">
-          {account ? (
-            <div className="bg-slate-700 px-4 py-2 rounded-lg flex items-center gap-3">
-              <span className="font-mono text-sm">{shorten(account)}</span>
-              <button
-                onClick={disconnect}
-                className="bg-red-600 px-3 py-1 rounded hover:opacity-90"
-              >
-                Disconnect
-              </button>
+
+        <nav className="relative z-10 container mx-auto px-6 py-6">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center space-x-3">
+              <div className="bg-gradient-to-r from-blue-500 to-purple-600 p-2 rounded-lg">
+                <Vote className="w-8 h-8" />
+              </div>
+              <span className="text-2xl font-bold">VoteChain</span>
             </div>
-          ) : (
+
             <button
               onClick={connectWallet}
-              className="bg-emerald-500 text-black px-4 py-2 rounded-lg font-semibold shadow-lg hover:scale-105 transition-transform"
+              disabled={loading}
+              className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 px-8 py-3 rounded-full font-semibold transition transform hover:scale-105 flex items-center space-x-2 shadow-lg disabled:opacity-50"
             >
-              Connect MetaMask
+              {loading ? (
+                <>
+                  <Activity className="w-5 h-5 animate-spin" />
+                  <span>Connecting...</span>
+                </>
+              ) : (
+                <>
+                  <Wallet className="w-5 h-5" />
+                  <span>Connect Wallet</span>
+                </>
+              )}
             </button>
-          )}
+          </div>
+        </nav>
+
+        <div className="relative z-10 container mx-auto px-6 py-20">
+          <div className="max-w-4xl mx-auto text-center">
+            <h1 className="text-6xl md:text-7xl font-bold mb-6 bg-gradient-to-r from-white via-blue-100 to-purple-200 bg-clip-text text-transparent">
+              Blockchain-Powered Democratic Elections
+            </h1>
+            <p className="text-xl md:text-2xl text-gray-300 mb-12 leading-relaxed">
+              Secure, transparent, and tamper-proof voting system built on
+              Binance Smart Chain. Your vote, your voice, guaranteed integrity.
+            </p>
+
+            <div className="flex flex-col sm:flex-row gap-4 justify-center mb-20">
+              <button
+                onClick={connectWallet}
+                disabled={loading}
+                className="bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 px-10 py-4 rounded-full font-bold text-lg transition transform hover:scale-105 shadow-2xl disabled:opacity-50 flex items-center justify-center space-x-2"
+              >
+                <Wallet className="w-6 h-6" />
+                <span>Get Started</span>
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="grid md:grid-cols-3 gap-6 mt-16">
+              <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 hover:bg-white/15 transition">
+                <Shield className="w-12 h-12 mb-4 text-blue-400 mx-auto" />
+                <h3 className="text-xl font-bold mb-3">Secure & Immutable</h3>
+                <p className="text-gray-300">
+                  Every vote is cryptographically secured and permanently
+                  recorded on the blockchain
+                </p>
+              </div>
+
+              <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 hover:bg-white/15 transition">
+                <Eye className="w-12 h-12 mb-4 text-purple-400 mx-auto" />
+                <h3 className="text-xl font-bold mb-3">Transparent Process</h3>
+                <p className="text-gray-300">
+                  Real-time election monitoring with complete transparency and
+                  auditability
+                </p>
+              </div>
+
+              <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 hover:bg-white/15 transition">
+                <Lock className="w-12 h-12 mb-4 text-pink-400 mx-auto" />
+                <h3 className="text-xl font-bold mb-3">Anonymous Voting</h3>
+                <p className="text-gray-300">
+                  Your vote remains private while ensuring you can only vote
+                  once
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {message.text && (
+          <div className="fixed top-6 right-6 z-50 max-w-md">
+            <div
+              className={`p-4 rounded-xl flex items-center space-x-3 shadow-2xl backdrop-blur-lg border ${
+                message.type === "success"
+                  ? "bg-green-500/90 border-green-400 text-white"
+                  : "bg-red-500/90 border-red-400 text-white"
+              }`}
+            >
+              {message.type === "success" ? (
+                <CheckCircle className="w-5 h-5" />
+              ) : (
+                <XCircle className="w-5 h-5" />
+              )}
+              <span className="font-semibold">{message.text}</span>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (!isCorrectNetwork) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-900 via-purple-900 to-indigo-900 text-white flex items-center justify-center p-6">
+        <div className="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/20 max-w-md">
+          <AlertCircle className="w-16 h-16 text-yellow-400 mx-auto mb-4" />
+          <h2 className="text-2xl font-bold mb-4 text-center">Wrong Network</h2>
+          <p className="text-gray-300 mb-6 text-center">
+            Please switch to Binance Smart Chain network to use this
+            application.
+          </p>
+          <button
+            onClick={() => contractUtils.switchToBSCNetwork(true)}
+            className="w-full bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 px-6 py-3 rounded-xl font-bold transition"
+          >
+            Switch to BSC Testnet
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50 to-purple-50">
+      <header className="bg-white shadow-md border-b-4 border-blue-600">
+        <div className="container mx-auto px-6 py-4">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center space-x-4">
+              <div className="bg-gradient-to-r from-blue-600 to-purple-600 p-2 rounded-lg">
+                <Vote className="w-8 h-8 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-gray-800">VoteChain</h1>
+                <p className="text-sm text-gray-600">
+                  Decentralized Election System
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-4">
+              <div className="hidden md:block text-right">
+                <div className="text-xs text-gray-600">Connected Account</div>
+                <div className="font-mono text-sm text-blue-600 font-semibold">
+                  {account.slice(0, 6)}...{account.slice(-4)}
+                </div>
+              </div>
+
+              {isCommissioner && (
+                <span className="bg-gradient-to-r from-yellow-400 to-orange-400 text-white px-4 py-2 rounded-full text-xs font-bold shadow-lg flex items-center space-x-1">
+                  <Shield className="w-4 h-4" />
+                  <span>Commissioner</span>
+                </span>
+              )}
+
+              <div className="bg-green-100 text-green-700 px-4 py-2 rounded-full text-xs font-semibold flex items-center space-x-1">
+                <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                <span>BSC</span>
+              </div>
+            </div>
+          </div>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-        {/* Left column - Status */}
-        <section className="md:col-span-1 bg-white/5 rounded-xl p-5 shadow-lg">
-          <h2 className="text-xl font-bold">Election Status</h2>
-          {loading ? (
-            <p className="text-sm text-slate-300 mt-3">Loading...</p>
-          ) : status ? (
-            <div className="mt-3 text-sm space-y-2 text-slate-200">
-              <div>
-                <strong>Name:</strong> {status.name}
-              </div>
-              <div>
-                <strong>Phase:</strong> {status.phase}
-              </div>
-              <div>
-                <strong>Start:</strong>{" "}
-                {new Date(status.startTime).toLocaleString()}
-              </div>
-              <div>
-                <strong>End:</strong>{" "}
-                {new Date(status.endTime).toLocaleString()}
-              </div>
-              <div>
-                <strong>Voters:</strong> {status.totalVoters}
-              </div>
-              <div>
-                <strong>Candidates:</strong> {status.totalCandidates}
-              </div>
-              <div>
-                <strong>Votes Cast:</strong> {status.votesCast}
-              </div>
-              <div>
-                <strong>Results Available:</strong>{" "}
-                {String(status.resultsAvailable)}
-              </div>
-            </div>
-          ) : (
-            <p className="text-slate-300 mt-3">No status loaded yet.</p>
-          )}
+      {message.text && (
+        <div className="container mx-auto px-6 mt-4">
+          <div
+            className={`p-4 rounded-xl flex items-center space-x-3 shadow-lg ${
+              message.type === "success"
+                ? "bg-green-50 border border-green-200 text-green-800"
+                : "bg-red-50 border border-red-200 text-red-800"
+            }`}
+          >
+            {message.type === "success" ? (
+              <CheckCircle className="w-5 h-5" />
+            ) : (
+              <XCircle className="w-5 h-5" />
+            )}
+            <span className="font-semibold">{message.text}</span>
+          </div>
+        </div>
+      )}
 
-          <div className="mt-4 flex flex-col gap-2">
-            <button
-              onClick={() =>
-                loadStatusAndCandidates(
-                  new ethers.Contract(
-                    CONTRACT_ADDRESS,
-                    CONTRACT_ABI,
-                    provider || ethers.getDefaultProvider()
-                  )
-                )
-              }
-              className="bg-blue-600 px-3 py-2 rounded"
-            >
-              Refresh
-            </button>
-            {status && status.resultsAvailable && (
+      <div className="container mx-auto px-6 py-8">
+        <div className="bg-white rounded-2xl shadow-lg mb-8 overflow-hidden">
+          <div className="flex overflow-x-auto border-b">
+            {[
+              { id: "dashboard", label: "Dashboard", icon: Activity },
+              { id: "register", label: "Register Voters", icon: Users },
+              { id: "nominate", label: "Nominate", icon: TrendingUp },
+              { id: "vote", label: "Cast Vote", icon: Vote },
+              { id: "results", label: "Results", icon: Trophy },
+            ].map(({ id, label, icon: Icon }) => (
               <button
-                onClick={fetchResults}
-                className="bg-yellow-500 text-black px-3 py-2 rounded"
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={`flex items-center space-x-2 px-6 py-4 font-semibold transition whitespace-nowrap ${
+                  activeTab === id
+                    ? "border-b-4 border-blue-600 text-blue-600 bg-blue-50"
+                    : "text-gray-600 hover:text-blue-600 hover:bg-gray-50"
+                }`}
               >
-                Get Results
+                <Icon className="w-5 h-5" />
+                <span>{label}</span>
               </button>
-            )}
-          </div>
-        </section>
-
-        {/* Middle column - Candidates & Vote */}
-        <section className="md:col-span-2 bg-white/5 rounded-xl p-5 shadow-lg">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-bold">Candidates</h2>
-            <div className="text-sm text-slate-300">
-              Phase: {status ? status.phase : "-"}
-            </div>
-          </div>
-
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-            {candidates.length === 0 && (
-              <div className="text-slate-300">No candidates found.</div>
-            )}
-            {candidates.map((c) => (
-              <div
-                key={c.id}
-                className="bg-white/3 rounded p-4 flex flex-col justify-between"
-              >
-                <div>
-                  <div className="text-lg font-semibold">{c.name}</div>
-                  <div className="text-sm text-slate-200">{c.party}</div>
-                  <p className="mt-2 text-sm text-slate-300">{c.manifesto}</p>
-                </div>
-                <div className="mt-4 flex items-center justify-between">
-                  <div className="text-sm">
-                    Votes: <strong>{c.votes}</strong>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      disabled={
-                        !account ||
-                        status?.phase !== "Voting" ||
-                        !isRegistered ||
-                        hasVoted ||
-                        txInProgress
-                      }
-                      onClick={() => handleVote(c.id)}
-                      className="bg-emerald-500 text-black px-3 py-1 rounded font-semibold disabled:opacity-50"
-                    >
-                      Vote
-                    </button>
-                    <span className="text-xs text-slate-300">ID: {c.id}</span>
-                  </div>
-                </div>
-              </div>
             ))}
           </div>
+        </div>
 
-          <div className="mt-6">
-            <h3 className="text-lg font-semibold">Your Voter Status</h3>
-            <div className="mt-2 text-sm text-slate-200">
-              <div>Registered: {String(isRegistered)}</div>
-              <div>Already Voted: {String(hasVoted)}</div>
-            </div>
-          </div>
-        </section>
+        {activeTab === "dashboard" && electionStatus && (
+          <div className="space-y-6">
+            <div className="bg-gradient-to-br from-blue-600 to-purple-600 rounded-2xl shadow-2xl p-8 text-white">
+              <h2 className="text-3xl font-bold mb-2">{electionStatus.name}</h2>
+              <p className="text-blue-100 mb-6">
+                Transparent. Secure. Democratic.
+              </p>
 
-        {/* Bottom panels: commissioner controls */}
-        <section className="md:col-span-3 bg-white/5 rounded-xl p-5 shadow-lg mt-2">
-          <h2 className="text-xl font-bold">Commissioner Controls</h2>
-          <p className="text-sm text-slate-300">
-            These actions require the commissioner account (the address that
-            deployed the contract).
-          </p>
-
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="bg-white/4 p-4 rounded">
-              <h4 className="font-semibold">Register Voter</h4>
-              <input
-                placeholder="0xAddress"
-                value={registerAddress}
-                onChange={(e) => setRegisterAddress(e.target.value)}
-                className="mt-2 w-full p-2 rounded bg-white/5"
-              />
-              <input
-                placeholder="National ID"
-                value={registerNationalId}
-                onChange={(e) => setRegisterNationalId(e.target.value)}
-                className="mt-2 w-full p-2 rounded bg-white/5"
-              />
-              <button
-                onClick={handleRegisterVoter}
-                className="mt-3 bg-indigo-600 px-3 py-2 rounded disabled:opacity-50"
-              >
-                Register
-              </button>
-            </div>
-
-            <div className="bg-white/4 p-4 rounded">
-              <h4 className="font-semibold">Nominate Candidate</h4>
-              <input
-                placeholder="Name"
-                value={nomName}
-                onChange={(e) => setNomName(e.target.value)}
-                className="mt-2 w-full p-2 rounded bg-white/5"
-              />
-              <input
-                placeholder="Party"
-                value={nomParty}
-                onChange={(e) => setNomParty(e.target.value)}
-                className="mt-2 w-full p-2 rounded bg-white/5"
-              />
-              <input
-                placeholder="Manifesto"
-                value={nomManifesto}
-                onChange={(e) => setNomManifesto(e.target.value)}
-                className="mt-2 w-full p-2 rounded bg-white/5"
-              />
-              <button
-                onClick={handleNominate}
-                className="mt-3 bg-purple-600 px-3 py-2 rounded"
-              >
-                Nominate
-              </button>
-            </div>
-
-            <div className="bg-white/4 p-4 rounded">
-              <h4 className="font-semibold">Advance Phase</h4>
-              <div className="text-sm text-slate-300 mt-2">
-                Current: {status ? status.phase : "-"}
+              <div className="flex items-center space-x-3 mb-6">
+                <span className="text-sm">Current Phase:</span>
+                <span className="px-6 py-2 rounded-full font-bold shadow-lg bg-white/20 backdrop-blur-lg border border-white/30">
+                  {phaseNames[electionStatus.phase]}
+                </span>
               </div>
+
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
+                  <Users className="w-8 h-8 mb-2 text-blue-200" />
+                  <div className="text-3xl font-bold">
+                    {electionStatus.totalVoters.toLocaleString()}
+                  </div>
+                  <div className="text-sm text-blue-200">Total Voters</div>
+                </div>
+
+                <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
+                  <Vote className="w-8 h-8 mb-2 text-purple-200" />
+                  <div className="text-3xl font-bold">
+                    {electionStatus.totalCandidates}
+                  </div>
+                  <div className="text-sm text-purple-200">Candidates</div>
+                </div>
+
+                <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
+                  <CheckCircle className="w-8 h-8 mb-2 text-green-200" />
+                  <div className="text-3xl font-bold">
+                    {electionStatus.votesCast.toLocaleString()}
+                  </div>
+                  <div className="text-sm text-green-200">Votes Cast</div>
+                </div>
+
+                <div className="bg-white/10 backdrop-blur-lg rounded-xl p-4 border border-white/20">
+                  <TrendingUp className="w-8 h-8 mb-2 text-yellow-200" />
+                  <div className="text-3xl font-bold">
+                    {electionStatus.totalVoters > 0
+                      ? (
+                          (electionStatus.votesCast /
+                            electionStatus.totalVoters) *
+                          100
+                        ).toFixed(1)
+                      : 0}
+                    %
+                  </div>
+                  <div className="text-sm text-yellow-200">Turnout</div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-lg p-8">
+              <h3 className="text-2xl font-bold text-gray-800 mb-6">
+                Election Timeline
+              </h3>
+              <div className="grid md:grid-cols-2 gap-6">
+                <div className="flex items-start space-x-4">
+                  <div className="bg-green-100 p-3 rounded-lg">
+                    <Calendar className="w-6 h-6 text-green-600" />
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-600 font-semibold">
+                      Election Start
+                    </div>
+                    <div className="text-lg font-bold text-gray-800">
+                      {formatDate(electionStatus.startTime)}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex items-start space-x-4">
+                  <div className="bg-red-100 p-3 rounded-lg">
+                    <Calendar className="w-6 h-6 text-red-600" />
+                  </div>
+                  <div>
+                    <div className="text-sm text-gray-600 font-semibold">
+                      Election End
+                    </div>
+                    <div className="text-lg font-bold text-gray-800">
+                      {formatDate(electionStatus.endTime)}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {isCommissioner && (
+                <div className="mt-8 pt-8 border-t border-gray-200">
+                  <h4 className="text-lg font-bold text-gray-800 mb-4">
+                    Commissioner Controls
+                  </h4>
+                  <div className="flex flex-wrap gap-4">
+                    <button
+                      onClick={moveToNextPhase}
+                      disabled={loading}
+                      className="bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-6 py-3 rounded-xl font-semibold transition transform hover:scale-105 shadow-lg disabled:opacity-50 flex items-center space-x-2"
+                    >
+                      {loading ? (
+                        <Activity className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <ChevronRight className="w-5 h-5" />
+                      )}
+                      <span>Move to Next Phase</span>
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {voterInfo && (
+              <div className="bg-white rounded-2xl shadow-lg p-8">
+                <h3 className="text-2xl font-bold text-gray-800 mb-6">
+                  Your Voting Status
+                </h3>
+                <div className="grid md:grid-cols-3 gap-6">
+                  <div
+                    className={`p-6 rounded-xl ${
+                      voterInfo.isRegistered
+                        ? "bg-green-50 border-2 border-green-200"
+                        : "bg-gray-50 border-2 border-gray-200"
+                    }`}
+                  >
+                    {voterInfo.isRegistered ? (
+                      <CheckCircle className="w-8 h-8 text-green-600 mb-3" />
+                    ) : (
+                      <XCircle className="w-8 h-8 text-gray-400 mb-3" />
+                    )}
+                    <div className="font-bold text-gray-800 mb-1">
+                      Registration
+                    </div>
+                    <div
+                      className={`text-sm ${
+                        voterInfo.isRegistered
+                          ? "text-green-600"
+                          : "text-gray-600"
+                      }`}
+                    >
+                      {voterInfo.isRegistered ? "Registered" : "Not Registered"}
+                    </div>
+                  </div>
+
+                  <div
+                    className={`p-6 rounded-xl ${
+                      voterInfo.hasVoted
+                        ? "bg-blue-50 border-2 border-blue-200"
+                        : "bg-gray-50 border-2 border-gray-200"
+                    }`}
+                  >
+                    {voterInfo.hasVoted ? (
+                      <CheckCircle className="w-8 h-8 text-blue-600 mb-3" />
+                    ) : (
+                      <Lock className="w-8 h-8 text-gray-400 mb-3" />
+                    )}
+                    <div className="font-bold text-gray-800 mb-1">
+                      Vote Status
+                    </div>
+                    <div
+                      className={`text-sm ${
+                        voterInfo.hasVoted ? "text-blue-600" : "text-gray-600"
+                      }`}
+                    >
+                      {voterInfo.hasVoted ? "Vote Cast" : "Not Voted Yet"}
+                    </div>
+                  </div>
+
+                  <div className="p-6 rounded-xl bg-purple-50 border-2 border-purple-200">
+                    <Shield className="w-8 h-8 text-purple-600 mb-3" />
+                    <div className="font-bold text-gray-800 mb-1">
+                      Eligibility
+                    </div>
+                    <div className="text-sm text-purple-600">
+                      {voterInfo.isRegistered && !voterInfo.hasVoted
+                        ? "Can Vote"
+                        : "Action Complete"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "register" && (
+          <div className="grid md:grid-cols-2 gap-6">
+            <div className="bg-white rounded-2xl shadow-lg p-8">
+              <h2 className="text-2xl font-bold text-gray-800 mb-6">
+                Register Single Voter
+              </h2>
+
+              {!isCommissioner ? (
+                <div className="bg-yellow-50 border-2 border-yellow-200 rounded-xl p-6 flex items-start space-x-3">
+                  <AlertCircle className="w-6 h-6 text-yellow-600 mt-0.5 flex-shrink-0" />
+                  <div className="text-yellow-800">
+                    <div className="font-bold mb-1">
+                      Commissioner Access Required
+                    </div>
+                    <div className="text-sm">
+                      Only the election commissioner can register voters.
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-2">
+                      Voter Wallet Address
+                    </label>
+                    <input
+                      type="text"
+                      value={voterAddress}
+                      onChange={(e) => setVoterAddress(e.target.value)}
+                      placeholder="0x..."
+                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-2">
+                      National ID
+                    </label>
+                    <input
+                      type="text"
+                      value={nationalId}
+                      onChange={(e) => setNationalId(e.target.value)}
+                      placeholder="Enter national ID"
+                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-4 focus:ring-blue-100 focus:border-blue-500 transition"
+                    />
+                  </div>
+
+                  <button
+                    onClick={registerVoter}
+                    disabled={loading}
+                    className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white px-6 py-4 rounded-xl font-bold transition transform hover:scale-[1.02] shadow-lg disabled:opacity-50 flex items-center justify-center space-x-2"
+                  >
+                    {loading ? (
+                      <Activity className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <Users className="w-5 h-5" />
+                    )}
+                    <span>{loading ? "Registering..." : "Register Voter"}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-lg p-8">
+              <h2 className="text-2xl font-bold text-gray-800 mb-6">
+                Batch Register Voters
+              </h2>
+
+              {!isCommissioner ? (
+                <div className="bg-yellow-50 border-2 border-yellow-200 rounded-xl p-6 flex items-start space-x-3">
+                  <AlertCircle className="w-6 h-6 text-yellow-600 mt-0.5 flex-shrink-0" />
+                  <div className="text-yellow-800">
+                    <div className="font-bold mb-1">
+                      Commissioner Access Required
+                    </div>
+                    <div className="text-sm">
+                      Only the election commissioner can batch register voters.
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="max-h-96 overflow-y-auto space-y-3">
+                    {batchVoters.map((voter, index) => (
+                      <div key={index} className="flex gap-2">
+                        <input
+                          type="text"
+                          value={voter.address}
+                          onChange={(e) =>
+                            updateBatchVoter(index, "address", e.target.value)
+                          }
+                          placeholder="0x..."
+                          className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 focus:border-blue-500 text-sm"
+                        />
+                        <input
+                          type="text"
+                          value={voter.id}
+                          onChange={(e) =>
+                            updateBatchVoter(index, "id", e.target.value)
+                          }
+                          placeholder="National ID"
+                          className="flex-1 px-3 py-2 border-2 border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-100 focus:border-blue-500 text-sm"
+                        />
+                        {batchVoters.length > 1 && (
+                          <button
+                            onClick={() => removeBatchVoterRow(index)}
+                            className="px-3 py-2 bg-red-100 hover:bg-red-200 text-red-600 rounded-lg transition"
+                          >
+                            <XCircle className="w-5 h-5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={addBatchVoterRow}
+                    className="w-full px-4 py-2 border-2 border-dashed border-gray-300 hover:border-blue-400 hover:bg-blue-50 text-gray-600 hover:text-blue-600 rounded-xl transition font-semibold"
+                  >
+                    + Add More Voters
+                  </button>
+
+                  <button
+                    onClick={batchRegisterVoters}
+                    disabled={loading}
+                    className="w-full bg-gradient-to-r from-purple-600 to-purple-700 hover:from-purple-700 hover:to-purple-800 text-white px-6 py-4 rounded-xl font-bold transition transform hover:scale-[1.02] shadow-lg disabled:opacity-50 flex items-center justify-center space-x-2"
+                  >
+                    {loading ? (
+                      <Activity className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <Users className="w-5 h-5" />
+                    )}
+                    <span>{loading ? "Processing..." : "Batch Register"}</span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === "nominate" && (
+          <div className="max-w-2xl mx-auto">
+            <div className="bg-white rounded-2xl shadow-lg p-8">
+              <h2 className="text-2xl font-bold text-gray-800 mb-6">
+                Nominate Candidate
+              </h2>
+
+              {!isCommissioner ? (
+                <div className="bg-yellow-50 border-2 border-yellow-200 rounded-xl p-6 flex items-start space-x-3">
+                  <AlertCircle className="w-6 h-6 text-yellow-600 mt-0.5 flex-shrink-0" />
+                  <div className="text-yellow-800">
+                    <div className="font-bold mb-1">
+                      Commissioner Access Required
+                    </div>
+                    <div className="text-sm">
+                      Only the election commissioner can nominate candidates.
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-2">
+                      Candidate Name *
+                    </label>
+                    <input
+                      type="text"
+                      value={candidateName}
+                      onChange={(e) => setCandidateName(e.target.value)}
+                      placeholder="Enter candidate full name"
+                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-4 focus:ring-purple-100 focus:border-purple-500 transition"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-2">
+                      Political Party *
+                    </label>
+                    <input
+                      type="text"
+                      value={candidateParty}
+                      onChange={(e) => setCandidateParty(e.target.value)}
+                      placeholder="Enter party name"
+                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-4 focus:ring-purple-100 focus:border-purple-500 transition"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold text-gray-700 mb-2">
+                      Election Manifesto
+                    </label>
+                    <textarea
+                      value={candidateManifesto}
+                      onChange={(e) => setCandidateManifesto(e.target.value)}
+                      placeholder="Enter candidate's vision and promises..."
+                      rows="6"
+                      className="w-full px-4 py-3 border-2 border-gray-300 rounded-xl focus:ring-4 focus:ring-purple-100 focus:border-purple-500 transition"
+                    />
+                  </div>
+
+                  <button
+                    onClick={nominateCandidate}
+                    disabled={loading}
+                    className="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-700 hover:to-pink-700 text-white px-6 py-4 rounded-xl font-bold transition transform hover:scale-[1.02] shadow-lg disabled:opacity-50 flex items-center justify-center space-x-2"
+                  >
+                    {loading ? (
+                      <Activity className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <TrendingUp className="w-5 h-5" />
+                    )}
+                    <span>
+                      {loading ? "Nominating..." : "Nominate Candidate"}
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {activeTab === "vote" && (
+          <div className="max-w-4xl mx-auto">
+            <div className="bg-white rounded-2xl shadow-lg p-8 mb-6">
+              <h2 className="text-2xl font-bold text-gray-800 mb-2">
+                Cast Your Vote
+              </h2>
+              <p className="text-gray-600">
+                Select your preferred candidate to participate in this historic
+                election
+              </p>
+            </div>
+
+            {!voterInfo || !voterInfo.isRegistered ? (
+              <div className="bg-red-50 border-2 border-red-200 rounded-xl p-6 flex items-start space-x-3">
+                <AlertCircle className="w-6 h-6 text-red-600 mt-0.5 flex-shrink-0" />
+                <div className="text-red-800">
+                  <div className="font-bold mb-1">Not Registered</div>
+                  <div className="text-sm">
+                    You must be a registered voter to cast your vote.
+                  </div>
+                </div>
+              </div>
+            ) : voterInfo.hasVoted ? (
+              <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-6 flex items-start space-x-3">
+                <CheckCircle className="w-6 h-6 text-blue-600 mt-0.5 flex-shrink-0" />
+                <div className="text-blue-800">
+                  <div className="font-bold mb-1">Vote Already Cast</div>
+                  <div className="text-sm">
+                    You have successfully voted in this election. Thank you for
+                    participating!
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {candidates.map((candidate) => (
+                  <div
+                    key={candidate.id}
+                    className="bg-white border-2 border-gray-200 hover:border-blue-400 rounded-2xl p-6 transition transform hover:scale-[1.01] hover:shadow-xl"
+                  >
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <div className="flex items-start justify-between mb-3">
+                          <div>
+                            <h3 className="text-xl font-bold text-gray-800">
+                              {candidate.name}
+                            </h3>
+                            <p className="text-blue-600 font-semibold">
+                              {candidate.party}
+                            </p>
+                          </div>
+                          <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-xs font-bold">
+                            ID: {candidate.id}
+                          </span>
+                        </div>
+
+                        {candidate.manifesto && (
+                          <p className="text-gray-600 text-sm mb-4">
+                            {candidate.manifesto}
+                          </p>
+                        )}
+
+                        <div className="flex items-center space-x-2">
+                          {candidate.isActive && (
+                            <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs font-semibold flex items-center space-x-1">
+                              <CheckCircle className="w-3 h-3" />
+                              <span>Active</span>
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* <button
+                        onClick={() => castVote(candidate.id)}
+                        disabled={loading}
+                        className="ml-4 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-8 py-3 rounded-xl font-bold transition transform hover:scale-105 shadow-lg disabled:opacity-50 flex items-center space-x-2"
+                      >
+                        <Vote className="w-5 h-5" />
+                        <span>Vote</span>
+                      </button> */}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === "results" && (
+          <div className="max-w-4xl mx-auto">
+            <div className="bg-white rounded-2xl shadow-lg p-8 mb-6">
+              <h2 className="text-2xl font-bold text-gray-800 mb-2">
+                Election Results
+              </h2>
+              <p className="text-gray-600">
+                Live voting statistics and candidate rankings
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              {candidates
+                .sort((a, b) => b.voteCount - a.voteCount)
+                .map((candidate, index) => (
+                  <div
+                    key={candidate.id}
+                    className={`bg-white rounded-2xl p-6 transition transform hover:scale-[1.01] ${
+                      index === 0
+                        ? "border-4 border-yellow-400 shadow-2xl"
+                        : "border-2 border-gray-200 shadow-lg"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center space-x-4">
+                        {index === 0 && (
+                          <div className="bg-gradient-to-br from-yellow-400 to-orange-500 p-3 rounded-xl shadow-lg">
+                            <Trophy className="w-8 h-8 text-white" />
+                          </div>
+                        )}
+                        {index === 1 && (
+                          <div className="bg-gradient-to-br from-gray-300 to-gray-400 p-3 rounded-xl">
+                            <Trophy className="w-7 h-7 text-white" />
+                          </div>
+                        )}
+                        {index === 2 && (
+                          <div className="bg-gradient-to-br from-orange-400 to-orange-600 p-3 rounded-xl">
+                            <Trophy className="w-6 h-6 text-white" />
+                          </div>
+                        )}
+                        {index > 2 && (
+                          <div className="bg-gray-100 p-3 rounded-xl w-14 h-14 flex items-center justify-center">
+                            <span className="text-2xl font-bold text-gray-600">
+                              {index + 1}
+                            </span>
+                          </div>
+                        )}
+
+                        <div>
+                          <h3 className="text-xl font-bold text-gray-800">
+                            {candidate.name}
+                          </h3>
+                          <p className="text-gray-600">{candidate.party}</p>
+                        </div>
+                      </div>
+
+                      <div className="text-right">
+                        <div className="text-3xl font-bold text-blue-600">
+                          {candidate.voteCount.toLocaleString()}
+                        </div>
+                        <div className="text-sm text-gray-600">votes</div>
+                        <div className="text-xs text-gray-500 mt-1">
+                          {electionStatus &&
+                            (
+                              (candidate.voteCount / electionStatus.votesCast) *
+                              100
+                            ).toFixed(1)}
+                          %
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mt-4">
+                      <div className="bg-gray-200 rounded-full h-3 overflow-hidden">
+                        <div
+                          className={`h-3 rounded-full transition-all duration-1000 ${
+                            index === 0
+                              ? "bg-gradient-to-r from-yellow-400 to-orange-500"
+                              : index === 1
+                              ? "bg-gradient-to-r from-gray-400 to-gray-500"
+                              : index === 2
+                              ? "bg-gradient-to-r from-orange-400 to-orange-600"
+                              : "bg-gradient-to-r from-blue-400 to-blue-600"
+                          }`}
+                          style={{
+                            width: `${
+                              electionStatus
+                                ? (candidate.voteCount /
+                                    electionStatus.votesCast) *
+                                  100
+                                : 0
+                            }%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {showVoteConfirm && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8">
+            <div className="text-center mb-6">
+              <div className="bg-blue-100 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Vote className="w-8 h-8 text-blue-600" />
+              </div>
+              <h3 className="text-2xl font-bold text-gray-800 mb-2">
+                Confirm Your Vote
+              </h3>
+              <p className="text-gray-600">This action cannot be undone</p>
+            </div>
+
+            {selectedVoteCandidate && (
+              <div className="bg-gray-50 rounded-xl p-4 mb-6">
+                <div className="text-sm text-gray-600 mb-1">
+                  You are voting for:
+                </div>
+                <div className="font-bold text-lg text-gray-800">
+                  {candidates.find((c) => c.id === selectedVoteCandidate)?.name}
+                </div>
+                <div className="text-blue-600">
+                  {
+                    candidates.find((c) => c.id === selectedVoteCandidate)
+                      ?.party
+                  }
+                </div>
+              </div>
+            )}
+
+            <div className="flex space-x-3">
               <button
-                onClick={handleMovePhase}
-                className="mt-3 bg-yellow-600 px-3 py-2 rounded"
+                onClick={() => {
+                  setShowVoteConfirm(false);
+                  setSelectedVoteCandidate(null);
+                }}
+                className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 px-6 py-3 rounded-xl font-bold transition"
               >
-                Move To Next Phase
+                Cancel
+              </button>
+              <button
+                onClick={confirmVote}
+                disabled={loading}
+                className="flex-1 bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white px-6 py-3 rounded-xl font-bold transition disabled:opacity-50 flex items-center justify-center space-x-2"
+              >
+                {loading ? (
+                  <Activity className="w-5 h-5 animate-spin" />
+                ) : (
+                  <CheckCircle className="w-5 h-5" />
+                )}
+                <span>{loading ? "Processing..." : "Confirm Vote"}</span>
               </button>
             </div>
           </div>
-        </section>
-      </main>
+        </div>
+      )}
 
-      <footer className="max-w-5xl mx-auto text-center mt-10 text-xs text-slate-400">
-        Built with ❤️ for demonstration. Replace ABI & address with your
-        contract data.
-      </footer>
+      {loading && (
+        <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-40">
+          <div className="bg-white rounded-2xl p-8 shadow-2xl flex flex-col items-center">
+            <Activity className="w-12 h-12 text-blue-600 animate-spin mb-4" />
+            <div className="text-gray-800 font-bold">
+              Processing Transaction...
+            </div>
+            <div className="text-gray-600 text-sm mt-2">
+              Please confirm in your wallet
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
+};
+export default ElectionDApp;
